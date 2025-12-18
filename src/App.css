@@ -54,7 +54,7 @@ h2 {
   font-size: 1.5em;
   margin-bottom: 20px;
   margin-top: 30px;
-  border-bottom: 2px solid #4a90e2;
+  border-bottom: 2px solid #000000;
   padding-bottom: 10px;
 }
 
@@ -209,23 +209,23 @@ h3 {
 
 /* 시뮬레이션 버튼 */
 .simulate-button {
-  background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+  background: #333;
   color: white;
   border: none;
-  padding: 15px 40px;
-  font-size: 1.1em;
+  padding: 10px 25px;
+  font-size: 0.95em;
   font-weight: 600;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.3s ease;
   margin-top: 20px;
-  box-shadow: 0 4px 6px rgba(74, 144, 226, 0.3);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .simulate-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, #357abd 0%, #2a5f8f 100%);
+  background: #555;
   transform: translateY(-2px);
-  box-shadow: 0 6px 12px rgba(74, 144, 226, 0.4);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
 }
 
 .simulate-button:disabled {

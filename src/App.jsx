@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import './App.css'
 import { 
   LineChart, 
@@ -12,6 +12,7 @@ import {
   ReferenceArea,
   ReferenceLine
 } from 'recharts'
+import * as XLSX from 'xlsx'
 
 const LAYER_NAMES = ['Glass', 'ITO', 'HTL', 'Perovskite', 'ETL', 'Cathode']
 const DEFAULT_VALUES = {
@@ -36,6 +37,8 @@ function App() {
   const [simulationResult, setSimulationResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const chart1Ref = useRef(null)
+  const chart2Ref = useRef(null)
 
   const handleLayerChange = (index, field, value) => {
     const newFormData = { ...formData }
@@ -241,6 +244,144 @@ function App() {
     
     return labels
   }
+  
+  // 시뮬레이션 기본 정보 계산
+  const getSimulationStats = () => {
+    if (!simulationResult) return null
+    
+    const { temperature_active, perovskite_center_temp } = simulationResult
+    const finalTimeIndex = temperature_active[0].length - 1
+    
+    // 시작온도 (주변 온도)
+    const startTemp = formData.T_ambient
+    
+    // 최종온도 (페로브스카이트 중간 지점의 마지막 온도)
+    const finalTemp = perovskite_center_temp[finalTimeIndex]
+    
+    // 소자 내부 최대/최소 온도차이 (활성층의 최종 온도 프로파일에서)
+    const finalActiveTemps = temperature_active.map(row => row[finalTimeIndex])
+    const maxTemp = Math.max(...finalActiveTemps)
+    const minTemp = Math.min(...finalActiveTemps)
+    const tempDifference = maxTemp - minTemp
+    
+    return {
+      startTemp,
+      finalTemp,
+      maxTemp,
+      minTemp,
+      tempDifference
+    }
+  }
+  
+  // Excel 저장 함수
+  const handleSaveExcel = () => {
+    if (!simulationResult) {
+      alert('시뮬레이션 결과가 없습니다.')
+      return
+    }
+    
+    try {
+      const { time, position_active_nm, temperature_active, perovskite_center_temp } = simulationResult
+      const stats = getSimulationStats()
+      
+      // 첫 번째 시트: 위치-시간에 따른 contour plot 데이터 (transpose)
+      // 각 행이 같은 시간을 나타내도록 transpose
+      const contourData = []
+      // 첫 번째 행: 헤더 (시간, 위치1, 위치2, ...)
+      const headerRow = ['시간', ...position_active_nm.map(pos => Number(pos))]
+      contourData.push(headerRow)
+      
+      // 각 시간별로 위치에 따른 온도 데이터
+      time.forEach((t, timeIdx) => {
+        const row = [
+          Number(t), // 시간 (숫자로 저장)
+          ...temperature_active.map(posTemps => Number(posTemps[timeIdx]))
+        ]
+        contourData.push(row)
+      })
+      
+      // 두 번째 시트: 페로브스카이트 중간 지점 데이터 + 기본 정보
+      const summaryData = []
+      // 시뮬레이션 파라미터를 첫 번째 행부터 표시
+      summaryData.push(['시뮬레이션 파라미터', '값'])
+      summaryData.push(['시작 온도', Number(stats.startTemp)])
+      summaryData.push(['최종 온도', Number(stats.finalTemp)])
+      summaryData.push(['소자 내부 최대 온도', Number(stats.maxTemp)])
+      summaryData.push(['소자 내부 최소 온도', Number(stats.minTemp)])
+      summaryData.push(['소자 내부 온도 차이', Number(stats.tempDifference)])
+      
+      // 빈 행 추가
+      summaryData.push([])
+      
+      // 페로브스카이트 중간 지점 데이터
+      summaryData.push(['시간', '페로브스카이트 중간 지점 온도'])
+      time.forEach((t, idx) => {
+        summaryData.push([Number(t), Number(perovskite_center_temp[idx])])
+      })
+      
+      // 세 번째 시트: 시뮬레이션 입력 파라미터
+      const inputParamsData = []
+      inputParamsData.push(['레이어 이름', '두께 (nm)', '열전도도 (W/m·K)', '밀도 (kg/m³)', '비열 (J/kg·K)'])
+      
+      LAYER_NAMES.forEach((name, idx) => {
+        inputParamsData.push([
+          name,
+          Number(formData.thickness_layers_nm[idx]),
+          Number(formData.k_therm_layers[idx]),
+          Number(formData.rho_layers[idx]),
+          Number(formData.c_p_layers[idx])
+        ])
+      })
+      
+      // 빈 행 추가
+      inputParamsData.push([])
+      
+      // 전기적 파라미터
+      inputParamsData.push(['전기적 파라미터', ''])
+      inputParamsData.push(['전압 (V)', Number(formData.voltage)])
+      inputParamsData.push(['전류 밀도 (A/m²)', Number(formData.current_density)])
+      
+      // 빈 행 추가
+      inputParamsData.push([])
+      
+      // 열적 파라미터
+      inputParamsData.push(['열적 파라미터', ''])
+      inputParamsData.push(['상부 방사율 (Cathode)', Number(formData.epsilon_top)])
+      inputParamsData.push(['하부 방사율 (Glass)', Number(formData.epsilon_bottom)])
+      inputParamsData.push(['대류 계수 (W/m²·K)', Number(formData.h_conv)])
+      inputParamsData.push(['주변 온도 (°C)', Number(formData.T_ambient)])
+      
+      // 빈 행 추가
+      inputParamsData.push([])
+      
+      // 시뮬레이션 시간
+      inputParamsData.push(['시뮬레이션 시간', ''])
+      inputParamsData.push(['시작 시간 (s)', Number(formData.t_start)])
+      inputParamsData.push(['종료 시간 (s)', Number(formData.t_end)])
+      
+      // 워크북 생성
+      const wb = XLSX.utils.book_new()
+      
+      // 첫 번째 시트: Contour Plot 데이터 (transpose)
+      const ws1 = XLSX.utils.aoa_to_sheet(contourData)
+      XLSX.utils.book_append_sheet(wb, ws1, '위치-시간 온도 데이터')
+      
+      // 두 번째 시트: 요약 데이터
+      const ws2 = XLSX.utils.aoa_to_sheet(summaryData)
+      XLSX.utils.book_append_sheet(wb, ws2, '페로브스카이트 온도 및 요약')
+      
+      // 세 번째 시트: 입력 파라미터
+      const ws3 = XLSX.utils.aoa_to_sheet(inputParamsData)
+      XLSX.utils.book_append_sheet(wb, ws3, '입력 파라미터')
+      
+      // 파일 저장
+      const fileName = `simulation_result_${new Date().toISOString().split('T')[0]}.xlsx`
+      XLSX.writeFile(wb, fileName)
+    } catch (error) {
+      console.error('Excel 저장 중 오류:', error)
+      alert('Excel 저장 중 오류가 발생했습니다: ' + error.message)
+    }
+  }
 
   return (
     <div className="app">
@@ -443,7 +584,7 @@ function App() {
               <h2>시뮬레이션 결과</h2>
               
               {/* 최종 온도 프로파일 */}
-              <div className="chart-container" style={{ position: 'relative' }}>
+              <div className="chart-container" ref={chart1Ref} style={{ position: 'relative' }}>
                 <h3 style={{ marginBottom: '60px' }}>최종 온도 프로파일 (t = {simulationResult.time[simulationResult.time.length - 1].toFixed(1)} s)</h3>
                 <ResponsiveContainer width="100%" height={400}>
                   <LineChart>
@@ -555,7 +696,7 @@ function App() {
               </div>
 
               {/* 페로브스카이트 중간 지점의 시간에 따른 온도 */}
-              <div className="chart-container">
+              <div className="chart-container" ref={chart2Ref}>
                 <h3>페로브스카이트 중간 지점의 시간에 따른 온도</h3>
                 <ResponsiveContainer width="100%" height={400}>
                   <LineChart data={getPerovskiteCenterProfile()}>
@@ -588,168 +729,31 @@ function App() {
               {/* 저장 및 내보내기 버튼 */}
               <div style={{ marginTop: '30px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <button
-                  onClick={() => {
-                    // CSV 저장
-                    const { time, position_active_nm, temperature_active, position_glass_nm, temperature_glass } = simulationResult
-                    const finalTimeIndex = time.length - 1
-                    
-                    let csvContent = 'Position (nm),Temperature (°C)\n'
-                    
-                    // Glass 데이터
-                    if (position_glass_nm && temperature_glass) {
-                      position_glass_nm.forEach((pos, idx) => {
-                        csvContent += `${pos},${temperature_glass[idx][finalTimeIndex]}\n`
-                      })
-                    }
-                    
-                    // 활성층 데이터
-                    if (position_active_nm && temperature_active) {
-                      position_active_nm.forEach((pos, idx) => {
-                        csvContent += `${pos},${temperature_active[idx][finalTimeIndex]}\n`
-                      })
-                    }
-                    
-                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-                    const link = document.createElement('a')
-                    const url = URL.createObjectURL(blob)
-                    link.setAttribute('href', url)
-                    link.setAttribute('download', `temperature_profile_t${time[finalTimeIndex].toFixed(1)}s.csv`)
-                    link.style.visibility = 'hidden'
-                    document.body.appendChild(link)
-                    link.click()
-                    document.body.removeChild(link)
-                  }}
+                  onClick={handleSaveExcel}
                   style={{
                     padding: '10px 20px',
-                    backgroundColor: '#4a90e2',
+                    backgroundColor: '#333',
                     color: 'white',
                     border: 'none',
                     borderRadius: '6px',
                     cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: '500'
+                    fontSize: '0.95em',
+                    fontWeight: '600',
+                    transition: 'all 0.3s ease',
+                    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#555'
+                    e.currentTarget.style.transform = 'translateY(-2px)'
+                    e.currentTarget.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.3)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#333'
+                    e.currentTarget.style.transform = 'translateY(0)'
+                    e.currentTarget.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)'
                   }}
                 >
-                  CSV 저장
-                </button>
-                
-                <button
-                  onClick={() => {
-                    // PDF 저장 (인쇄 기능 활용)
-                    const printWindow = window.open('', '_blank')
-                    if (printWindow) {
-                      printWindow.document.write(`
-                        <html>
-                          <head>
-                            <title>Temperature Profile</title>
-                            <style>
-                              body { font-family: Arial, sans-serif; padding: 20px; }
-                              h1 { color: #333; }
-                              .chart-container { margin: 20px 0; }
-                            </style>
-                          </head>
-                          <body>
-                            <h1>최종 온도 프로파일 (t = ${simulationResult.time[simulationResult.time.length - 1].toFixed(1)} s)</h1>
-                            <p>이 창에서 인쇄하여 PDF로 저장할 수 있습니다.</p>
-                            <p>인쇄 대화상자에서 "대상"을 "PDF로 저장"으로 선택하세요.</p>
-                            <script>
-                              window.onload = function() {
-                                window.print();
-                              };
-                            </script>
-                          </body>
-                        </html>
-                      `)
-                      printWindow.document.close()
-                    }
-                  }}
-                  style={{
-                    padding: '10px 20px',
-                    backgroundColor: '#e74c3c',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: '500'
-                  }}
-                >
-                  PDF 저장
-                </button>
-                
-                <button
-                  onClick={() => {
-                    // 새창에서 열기
-                    const newWindow = window.open('', '_blank')
-                    if (newWindow) {
-                      const { time, position_active_nm, temperature_active, position_glass_nm, temperature_glass } = simulationResult
-                      const finalTimeIndex = time.length - 1
-                      
-                      let htmlContent = `
-                        <html>
-                          <head>
-                            <title>Temperature Profile - t = ${time[finalTimeIndex].toFixed(1)} s</title>
-                            <style>
-                              body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
-                              .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-                              h1 { color: #333; margin-bottom: 20px; }
-                              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                              th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
-                              th { background-color: #4a90e2; color: white; }
-                              tr:hover { background-color: #f5f5f5; }
-                            </style>
-                          </head>
-                          <body>
-                            <div class="container">
-                              <h1>최종 온도 프로파일 (t = ${time[finalTimeIndex].toFixed(1)} s)</h1>
-                              <table>
-                                <thead>
-                                  <tr>
-                                    <th>위치 (nm)</th>
-                                    <th>온도 (°C)</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                      `
-                      
-                      // Glass 데이터
-                      if (position_glass_nm && temperature_glass) {
-                        position_glass_nm.forEach((pos, idx) => {
-                          htmlContent += `<tr><td>${pos.toFixed(2)}</td><td>${temperature_glass[idx][finalTimeIndex].toFixed(4)}</td></tr>\n`
-                        })
-                      }
-                      
-                      // 활성층 데이터
-                      if (position_active_nm && temperature_active) {
-                        position_active_nm.forEach((pos, idx) => {
-                          htmlContent += `<tr><td>${pos.toFixed(2)}</td><td>${temperature_active[idx][finalTimeIndex].toFixed(4)}</td></tr>\n`
-                        })
-                      }
-                      
-                      htmlContent += `
-                                </tbody>
-                              </table>
-                            </div>
-                          </body>
-                        </html>
-                      `
-                      
-                      newWindow.document.write(htmlContent)
-                      newWindow.document.close()
-                    }
-                  }}
-                  style={{
-                    padding: '10px 20px',
-                    backgroundColor: '#16a34a',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: '500'
-                  }}
-                >
-                  새창에서 열기
+                  Excel 저장
                 </button>
               </div>
             </div>
