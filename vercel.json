@@ -1,18 +1,6 @@
 {
-  "version": 2,
   "buildCommand": "pnpm build",
   "outputDirectory": "dist",
-  "framework": null,
-  "functions": {
-    "api/**/*.py": {
-      "runtime": "python3.9"
-    }
-  },
-  "rewrites": [
-    {
-      "source": "/api/simulate",
-      "destination": "/api/simulate"
-    }
-  ]
+  "framework": null
 }
 
