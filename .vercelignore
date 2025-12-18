@@ -1,0 +1,12 @@
+node_modules
+.git
+.env
+.env.local
+*.log
+.DS_Store
+main.py
+app.py
+docker-compose.yml
+Dockerfile
+.devcontainer
+

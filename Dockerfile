@@ -20,3 +20,4 @@ EXPOSE 3000
 
 # 개발 서버 실행
 CMD ["pnpm", "dev"]
+
