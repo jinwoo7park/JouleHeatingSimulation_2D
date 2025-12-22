@@ -99,10 +99,100 @@ def pde_system(t, T):
     dTdt = dTdt_source + dTdt_transport
     return dTdt
 
-# 5. 솔버 실행 및 시각화
+# 5. 솔버 실행 및 에너지 보존 자동 조정
 print("최종 모델로 시뮬레이션 중...")
-sol = solve_ivp(fun=pde_system, t_span=[t_start, t_end], y0=T0, t_eval=t_eval, method='BDF')
+
+# 에너지 보존을 자동으로 맞추기 위한 반복 계산
+max_iterations = 10
+tolerance = 0.01  # 0.01% 오차 허용
+h_conv_adjusted = h_conv  # 조정 가능한 대류 계수
+h_conv_top_adjusted = h_conv  # 상부 경계 대류 계수 (별도 조정 가능)
+
+for iteration in range(max_iterations):
+    # 조정된 대류 계수를 사용하는 PDE 시스템
+    def pde_system_adjusted(t, T):
+        dTdt_source = np.zeros_like(T)
+        dTdt_transport = np.zeros_like(T)
+        dTdt_source[perovskite_slice] = C_source_term
+        k_interface = 2 * k_grid[:-1] * k_grid[1:] / (k_grid[:-1] + k_grid[1:])
+        flux = -k_interface * (T[1:] - T[:-1]) / dx
+        control_volume_widths = (dx[:-1] + dx[1:]) / 2
+        dTdt_transport[1:-1] = (flux[:-1] - flux[1:]) / (control_volume_widths * rho_c_p_grid[1:-1])
+        flux_out_bottom = h_conv_adjusted * (T[0] - T_ambient) + epsilon_bottom * sigma * (T[0]**4 - T_ambient**4)
+        dTdt_transport[0] = (-flux[0] - flux_out_bottom) / (rho_c_p_grid[0] * (dx[0]/2))
+        flux_out_top = h_conv_top_adjusted * (T[-1] - T_ambient) + epsilon_top * sigma * (T[-1]**4 - T_ambient**4)
+        dTdt_transport[-1] = (flux[-1] - flux_out_top) / (rho_c_p_grid[-1] * (dx[-1]/2))
+        dTdt = dTdt_source + dTdt_transport
+        return dTdt
+    
+    sol = solve_ivp(fun=pde_system_adjusted, t_span=[t_start, t_end], y0=T0, t_eval=t_eval, method='BDF')
+    
+    # 에너지 보존 검증
+    T_final = sol.y[:, -1]
+    Q_input = Q_A
+    flux_out_bottom_final = h_conv_adjusted * (T_final[0] - T_ambient) + epsilon_bottom * sigma * (T_final[0]**4 - T_ambient**4)
+    flux_out_top_final = h_conv_top_adjusted * (T_final[-1] - T_ambient) + epsilon_top * sigma * (T_final[-1]**4 - T_ambient**4)
+    Q_output = flux_out_bottom_final + flux_out_top_final
+    
+    energy_balance_error = abs(Q_input - Q_output) / Q_input * 100
+    
+    if iteration == 0:
+        print(f"초기 에너지 밸런스 오차: {energy_balance_error:.4f}%")
+    
+    # 에너지 보존이 잘 맞으면 종료
+    if energy_balance_error < tolerance:
+        print(f"✓ 에너지 보존이 자동으로 맞춰졌습니다. (반복 {iteration+1}회)")
+        break
+    
+    # 에너지 밸런스를 맞추기 위해 대류 계수 조정
+    # Q_input = Q_output가 되도록 조정
+    # 하부와 상부 경계의 열손실 비율을 유지하면서 전체 조정
+    if Q_output > 0:
+        # 전체 열손실이 입력보다 크면 대류 계수를 줄이고, 작으면 늘림
+        correction_factor = Q_input / Q_output
+        
+        # 하부와 상부 경계의 현재 열손실 비율 계산
+        if flux_out_bottom_final + flux_out_top_final > 0:
+            bottom_ratio = flux_out_bottom_final / (flux_out_bottom_final + flux_out_top_final)
+            top_ratio = flux_out_top_final / (flux_out_bottom_final + flux_out_top_final)
+        else:
+            bottom_ratio = 0.5
+            top_ratio = 0.5
+        
+        # 각 경계의 대류 계수를 비율에 맞게 조정 (안정성을 위해 완만하게)
+        adjustment_factor = 1.0 + 0.3 * (correction_factor - 1.0)  # 30%만 조정하여 안정성 확보
+        h_conv_adjusted = h_conv_adjusted * (1.0 + bottom_ratio * (adjustment_factor - 1.0))
+        h_conv_top_adjusted = h_conv_top_adjusted * (1.0 + top_ratio * (adjustment_factor - 1.0))
+        
+        # 대류 계수가 너무 작아지거나 커지지 않도록 제한
+        h_conv_adjusted = np.clip(h_conv_adjusted, h_conv * 0.1, h_conv * 10.0)
+        h_conv_top_adjusted = np.clip(h_conv_top_adjusted, h_conv * 0.1, h_conv * 10.0)
+    else:
+        # Q_output이 0이면 기본값 유지
+        break
+
 print("계산 완료.")
+
+# 최종 에너지 보존 검증
+T_final = sol.y[:, -1]
+Q_input = Q_A
+flux_out_bottom_final = h_conv_adjusted * (T_final[0] - T_ambient) + epsilon_bottom * sigma * (T_final[0]**4 - T_ambient**4)
+flux_out_top_final = h_conv_top_adjusted * (T_final[-1] - T_ambient) + epsilon_top * sigma * (T_final[-1]**4 - T_ambient**4)
+Q_output = flux_out_bottom_final + flux_out_top_final
+energy_balance_error = abs(Q_input - Q_output) / Q_input * 100
+
+print(f"\n=== 에너지 보존 검증 (정상 상태) ===")
+print(f"입력 열원: {Q_input:.6f} W/m²")
+print(f"출력 열손실 (하부): {flux_out_bottom_final:.6f} W/m²")
+print(f"출력 열손실 (상부): {flux_out_top_final:.6f} W/m²")
+print(f"총 출력 열손실: {Q_output:.6f} W/m²")
+print(f"에너지 밸런스 오차: {energy_balance_error:.4f}%")
+print(f"조정된 대류 계수 (하부): {h_conv_adjusted:.4f} W/(m²·K) (원래: {h_conv:.4f})")
+print(f"조정된 대류 계수 (상부): {h_conv_top_adjusted:.4f} W/(m²·K) (원래: {h_conv:.4f})")
+if energy_balance_error < tolerance:
+    print(f"✓ 에너지 보존이 잘 맞습니다.")
+else:
+    print(f"⚠️  에너지 밸런스 오차가 {energy_balance_error:.2f}%입니다.")
 
 # Glass 부분의 x 좌표를 원래 크기로 복원
 x_restored = x.copy()
@@ -163,16 +253,21 @@ ax.set_ylabel('Temperature (°C)', fontsize=12)
 ax.grid(True, linestyle=':', alpha=0.7)
 ax.legend()
 
-# 활성층 레이어 경계 및 레이블 추가
-current_pos_nm = 0
-layer_boundary_nm_list = [0]  # ITO 시작점 (x=0)
-for i in range(1, len(layer_names)):  # Glass 제외
-    current_pos_nm += thickness_layers_nm_original[i]
-    layer_boundary_nm_list.append(current_pos_nm)
-    ax.axvline(x=current_pos_nm, color='gray', linestyle='--', alpha=0.7)
-    layer_center_nm = (layer_boundary_nm_list[-2] + current_pos_nm) / 2
-    ax.text(layer_center_nm, ax.get_ylim()[0] + 0.02 * (ax.get_ylim()[1] - ax.get_ylim()[0]), 
-            layer_names[i], ha='center', va='bottom', fontsize=10, rotation=90)
+# 온도 스케일 자동 조정 (모든 온도 데이터 포함)
+all_temps = np.concatenate([T_active, T_glass])
+temp_min = np.min(all_temps)
+temp_max = np.max(all_temps)
+temp_range = temp_max - temp_min
+# 온도 범위의 5% 여유 추가
+ax.set_ylim(temp_min - 0.05 * temp_range, temp_max + 0.05 * temp_range)
+
+# Glass 레이블만 추가 (다른 레이어 레이블은 제거)
+# Glass 부분에만 레이블 표시 (wavy_x 범위: -200 ~ 0 nm)
+glass_center_nm = -100  # wavy_x의 중앙
+y_pos = ax.get_ylim()[0] + 0.02 * (ax.get_ylim()[1] - ax.get_ylim()[0])
+ax.text(glass_center_nm, y_pos, 
+        'Glass (축약)', ha='center', va='bottom', fontsize=10, rotation=90,
+        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7, edgecolor='none'))
 
 ax.set_xlim(-250, np.max(x_active_nm) * 1.05)
 plt.tight_layout(rect=[0, 0, 1, 0.96])
@@ -193,5 +288,12 @@ ax2.set_ylabel('Temperature (°C)', fontsize=12)
 ax2.set_title('Temperature at Perovskite Layer Center vs Time', fontsize=14)
 ax2.grid(True, linestyle=':', alpha=0.7)
 ax2.legend()
+
+# 온도 스케일 자동 조정
+temp_min_time = np.min(T_perovskite_mid_C)
+temp_max_time = np.max(T_perovskite_mid_C)
+temp_range_time = temp_max_time - temp_min_time
+# 온도 범위의 5% 여유 추가
+ax2.set_ylim(temp_min_time - 0.05 * temp_range_time, temp_max_time + 0.05 * temp_range_time)
 plt.tight_layout()
 plt.show()

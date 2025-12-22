@@ -14,13 +14,19 @@ import {
 } from 'recharts'
 import * as XLSX from 'xlsx'
 
-const LAYER_NAMES = ['Glass', 'ITO', 'HTL', 'Perovskite', 'ETL', 'Cathode']
+const LAYER_NAMES = ['Glass', 'ITO', 'HTL', 'Perovskite', 'ETL', 'Cathode', 'Heat spreader', 'Heat sink']
+// 각 레이어의 두께 입력 단위: Glass(mm), Heat spreader(μm), Heat sink(mm), 나머지(nm)
+const THICKNESS_UNITS = ['mm', 'nm', 'nm', 'nm', 'nm', 'nm', 'μm', 'mm']
 const DEFAULT_VALUES = {
   layer_names: LAYER_NAMES,
-  k_therm_layers: [0.8, 10.0, 0.2, 0.5, 0.2, 200.0],
-  rho_layers: [2500, 7140, 1000, 4100, 1200, 2700],
-  c_p_layers: [1000, 280, 1500, 250, 1500, 900],
-  thickness_layers_nm: [1100000, 70, 80, 280, 50, 100],
+  // Heat spreader: UV curable resin (polymer) - k=20, ρ=1100, cp=1800
+  // Heat sink: Silicon - k=150, ρ=2330, cp=700
+  k_therm_layers: [0.8, 10.0, 0.2, 0.5, 0.2, 200.0, 20.0, 150.0],
+  rho_layers: [2500, 7140, 1000, 4100, 1200, 2700, 1100, 2330],
+  c_p_layers: [1000, 280, 1500, 250, 1500, 900, 1800, 700],
+  // 기본값: Glass=1.1mm, Heat spreader=3μm, Heat sink=1mm, 나머지=nm
+  thickness_layers_nm: [1100000, 70, 80, 280, 50, 100, 3000, 1000000], // Heat spreader=3μm, Heat sink=1mm
+  layer_enabled: [true, true, true, true, true, true, false, false], // Heat spreader와 Heat sink는 기본적으로 비활성화
   voltage: 2.9,
   current_density: 300.0,
   eqe: 0.2, // External Quantum Efficiency (20%)
@@ -41,20 +47,76 @@ function App() {
   const chart1Ref = useRef(null)
   const chart2Ref = useRef(null)
 
+  // 두께 단위 변환 함수들
+  const convertToNm = (value, unit) => {
+    switch(unit) {
+      case 'mm': return value * 1000000  // mm to nm
+      case 'μm': return value * 1000      // μm to nm
+      case 'nm': return value             // nm
+      default: return value
+    }
+  }
+  
+  const convertFromNm = (valueNm, unit) => {
+    switch(unit) {
+      case 'mm': return valueNm / 1000000  // nm to mm
+      case 'μm': return valueNm / 1000    // nm to μm
+      case 'nm': return valueNm           // nm
+      default: return valueNm
+    }
+  }
+
   const handleLayerChange = (index, field, value) => {
     const newFormData = { ...formData }
-    newFormData[field][index] = parseFloat(value) || 0
+    if (field === 'thickness_layers_nm') {
+      // 사용자 입력값을 nm로 변환
+      const unit = THICKNESS_UNITS[index]
+      const valueInNm = convertToNm(parseFloat(value) || 0, unit)
+      newFormData[field][index] = valueInNm
+    } else {
+      newFormData[field][index] = parseFloat(value) || 0
+    }
     setFormData(newFormData)
+    // 입력값이 변경되면 이전 시뮬레이션 결과 초기화
+    if (simulationResult) {
+      setSimulationResult(null)
+    }
   }
 
   const handleGlobalChange = (field, value) => {
     setFormData({ ...formData, [field]: parseFloat(value) || 0 })
+    // 입력값이 변경되면 이전 시뮬레이션 결과 초기화
+    if (simulationResult) {
+      setSimulationResult(null)
+    }
   }
 
   const handleResetToDefault = () => {
     setFormData(DEFAULT_VALUES)
     setSimulationResult(null)
     setError(null)
+  }
+
+  // 레이어 활성화/비활성화 핸들러
+  const handleLayerEnabledChange = (index, enabled) => {
+    const newFormData = { ...formData }
+    newFormData.layer_enabled[index] = enabled
+    
+    // Heat sink (인덱스 7)를 선택하면 Heat spreader (인덱스 6)도 자동 선택
+    if (index === 7 && enabled) {
+      newFormData.layer_enabled[6] = true
+    }
+    
+    // Heat spreader (인덱스 6)를 해제하면 Heat sink (인덱스 7)도 자동 해제
+    if (index === 6 && !enabled) {
+      newFormData.layer_enabled[7] = false
+    }
+    
+    setFormData(newFormData)
+    // 레이어 활성화 상태가 변경되면 이전 시뮬레이션 결과 초기화
+    if (simulationResult) {
+      setSimulationResult(null)
+    }
   }
 
   // 섭씨 <-> 켈빈 변환 함수
@@ -64,10 +126,25 @@ function App() {
   const handleSimulate = async () => {
     setLoading(true)
     setError(null)
+    setSimulationResult(null) // 이전 시뮬레이션 결과 초기화
     try {
+      // 선택된 레이어만 필터링
+      const enabledIndices = formData.layer_enabled.map((enabled, idx) => enabled ? idx : -1).filter(idx => idx !== -1)
+      const filteredLayerNames = enabledIndices.map(idx => formData.layer_names[idx])
+      const filteredK = enabledIndices.map(idx => formData.k_therm_layers[idx])
+      const filteredRho = enabledIndices.map(idx => formData.rho_layers[idx])
+      const filteredCp = enabledIndices.map(idx => formData.c_p_layers[idx])
+      const filteredThickness = enabledIndices.map(idx => formData.thickness_layers_nm[idx])
+      
       // 섭씨를 켈빈으로 변환하여 백엔드에 전송
       const dataToSend = {
         ...formData,
+        layer_names: filteredLayerNames,
+        k_therm_layers: filteredK,
+        rho_layers: filteredRho,
+        c_p_layers: filteredCp,
+        thickness_layers_nm: filteredThickness,
+        layer_enabled: formData.layer_enabled,
         T_ambient: celsiusToKelvin(formData.T_ambient)
       }
       
@@ -81,13 +158,37 @@ function App() {
       
       if (!response.ok) {
         const errorText = await response.text()
+        console.error('서버 오류 응답:', errorText)
         let errorData
         try {
           errorData = JSON.parse(errorText)
-        } catch {
+          console.error('파싱된 오류 데이터:', errorData)
+        } catch (parseError) {
+          console.error('JSON 파싱 오류:', parseError)
           errorData = { error: errorText || `서버 오류: ${response.status} ${response.statusText}` }
         }
-        setError(errorData.error || `서버 오류: ${response.status} ${response.statusText}`)
+        
+        // 상세한 오류 정보 표시
+        let errorMessage = errorData.error || `서버 오류: ${response.status} ${response.statusText}`
+        if (errorData.error_details) {
+          console.error('상세 오류 정보:', errorData.error_details)
+          if (errorData.error_details.traceback) {
+            console.error('전체 Traceback:', errorData.error_details.traceback)
+            // traceback에서 파일명과 라인 번호 추출
+            const tracebackLines = errorData.error_details.traceback.split('\n')
+            const relevantLines = tracebackLines.filter(line => 
+              line.includes('api/simulate.py') || line.includes('File') || line.includes('line ')
+            )
+            if (relevantLines.length > 0) {
+              errorMessage += `\n\n오류 위치:\n${relevantLines.slice(0, 3).join('\n')}`
+            }
+          }
+          if (errorData.error_details.error_type) {
+            errorMessage = `[${errorData.error_details.error_type}] ${errorMessage}`
+          }
+        }
+        console.error('최종 오류 메시지:', errorMessage)
+        setError(errorMessage)
         return
       }
       
@@ -109,7 +210,21 @@ function App() {
         }
         setSimulationResult(convertedData)
       } else {
-        setError(data.error || '시뮬레이션 실행 중 오류가 발생했습니다.')
+        // 상세한 오류 정보 표시
+        let errorMessage = data.error || '시뮬레이션 실행 중 오류가 발생했습니다.'
+        if (data.error_details) {
+          console.error('상세 오류 정보:', data.error_details)
+          if (data.error_details.traceback) {
+            const tracebackLines = data.error_details.traceback.split('\n')
+            const relevantLine = tracebackLines.find(line => 
+              line.includes('api/simulate.py') || line.includes('File')
+            )
+            if (relevantLine) {
+              errorMessage += `\n\n위치: ${relevantLine.trim()}`
+            }
+          }
+        }
+        setError(errorMessage)
       }
     } catch (err) {
       console.error('API 호출 오류:', err)
@@ -199,6 +314,18 @@ function App() {
     // Glass는 인덱스 0이지만 그래프에서는 제외되므로, 활성층은 인덱스 1부터 시작
     const adjustedIndex = layerIndex + 1  // ITO는 인덱스 1
     return `hsl(${adjustedIndex * 60}, 70%, 80%)`
+  }
+  
+  // 온도 범위 계산 (레이어 라벨 위치 자동 조정용)
+  const getTemperatureRange = () => {
+    if (!simulationResult) return { min: 0, max: 100 }
+    const activeProfile = getActiveProfile()
+    const glassProfile = getGlassWavyProfile()
+    const allTemps = [...activeProfile.map(p => p.temperature), ...glassProfile.map(p => p.temperature)]
+    const min = Math.min(...allTemps)
+    const max = Math.max(...allTemps)
+    const range = max - min
+    return { min: min - range * 0.1, max: max + range * 0.1, range }
   }
   
   // 레이어 영역 데이터 (ReferenceArea용)
@@ -322,16 +449,20 @@ function App() {
       
       // 세 번째 시트: 시뮬레이션 입력 파라미터
       const inputParamsData = []
-      inputParamsData.push(['레이어 이름', '두께 (nm)', '열전도도 (W/m·K)', '밀도 (kg/m³)', '비열 (J/kg·K)'])
+      inputParamsData.push(['레이어 이름', '두께 (단위별)', '열전도도 (W/m·K)', '밀도 (kg/m³)', '비열 (J/kg·K)'])
       
+      // 활성화된 레이어만 출력 (Heat spreader와 Heat sink가 사용되지 않는 경우 제외)
       LAYER_NAMES.forEach((name, idx) => {
-        inputParamsData.push([
-          name,
-          Number(formData.thickness_layers_nm[idx]),
-          Number(formData.k_therm_layers[idx]),
-          Number(formData.rho_layers[idx]),
-          Number(formData.c_p_layers[idx])
-        ])
+        // layer_enabled가 true인 레이어만 출력
+        if (formData.layer_enabled && formData.layer_enabled[idx]) {
+          inputParamsData.push([
+            name,
+            `${convertFromNm(formData.thickness_layers_nm[idx], THICKNESS_UNITS[idx])} ${THICKNESS_UNITS[idx]}`,
+            Number(formData.k_therm_layers[idx]),
+            Number(formData.rho_layers[idx]),
+            Number(formData.c_p_layers[idx])
+          ])
+        }
       })
       
       // 빈 행 추가
@@ -420,55 +551,80 @@ function App() {
                 </button>
               </div>
               <div className="layers-grid">
-                {LAYER_NAMES.map((name, index) => (
-                  <div key={index} className="layer-card">
-                    <div className="layer-header">
-                      <h4>{name}</h4>
-                      <div className="layer-visual" style={{ 
-                        height: `${Math.max(30, Math.log10(formData.thickness_layers_nm[index] + 1) * 10)}px`,
-                        backgroundColor: `hsl(${index * 60}, 70%, 80%)`
-                      }}></div>
+                {LAYER_NAMES.map((name, index) => {
+                  const isHeatSpreader = index === 6
+                  const isHeatSink = index === 7
+                  const showCheckbox = isHeatSpreader || isHeatSink
+                  
+                  return (
+                    <div key={index} className="layer-card" style={{ 
+                      opacity: showCheckbox && !formData.layer_enabled[index] ? 0.5 : 1 
+                    }}>
+                      <div className="layer-header">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%' }}>
+                          <h4>{name}</h4>
+                          {showCheckbox && (
+                            <label style={{ display: 'flex', alignItems: 'center', marginLeft: isHeatSpreader ? '70px' : '20px', cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={formData.layer_enabled[index]}
+                                onChange={(e) => handleLayerEnabledChange(index, e.target.checked)}
+                              />
+                            </label>
+                          )}
+                        </div>
+                        <div className="layer-visual" style={{ 
+                          height: `${Math.max(30, Math.log10(formData.thickness_layers_nm[index] + 1) * 10)}px`,
+                          backgroundColor: `hsl(${index * 60}, 70%, 80%)`
+                        }}></div>
+                      </div>
+                      <div className="layer-inputs" style={{ 
+                        pointerEvents: showCheckbox && !formData.layer_enabled[index] ? 'none' : 'auto' 
+                      }}>
+                        <div className="input-field">
+                          <label>두께 ({THICKNESS_UNITS[index]})</label>
+                          <input
+                            type="number"
+                            value={convertFromNm(formData.thickness_layers_nm[index], THICKNESS_UNITS[index])}
+                            onChange={(e) => handleLayerChange(index, 'thickness_layers_nm', e.target.value)}
+                            step={THICKNESS_UNITS[index] === 'nm' ? '0.1' : THICKNESS_UNITS[index] === 'μm' ? '0.001' : '0.0001'}
+                            disabled={showCheckbox && !formData.layer_enabled[index]}
+                          />
+                        </div>
+                        <div className="input-field">
+                          <label>열전도도 (W/m·K)</label>
+                          <input
+                            type="number"
+                            value={formData.k_therm_layers[index]}
+                            onChange={(e) => handleLayerChange(index, 'k_therm_layers', e.target.value)}
+                            step="0.1"
+                            disabled={showCheckbox && !formData.layer_enabled[index]}
+                          />
+                        </div>
+                        <div className="input-field">
+                          <label>밀도 (kg/m³)</label>
+                          <input
+                            type="number"
+                            value={formData.rho_layers[index]}
+                            onChange={(e) => handleLayerChange(index, 'rho_layers', e.target.value)}
+                            step="1"
+                            disabled={showCheckbox && !formData.layer_enabled[index]}
+                          />
+                        </div>
+                        <div className="input-field">
+                          <label>비열 (J/kg·K)</label>
+                          <input
+                            type="number"
+                            value={formData.c_p_layers[index]}
+                            onChange={(e) => handleLayerChange(index, 'c_p_layers', e.target.value)}
+                            step="1"
+                            disabled={showCheckbox && !formData.layer_enabled[index]}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div className="layer-inputs">
-                      <div className="input-field">
-                        <label>두께 (nm)</label>
-                        <input
-                          type="number"
-                          value={formData.thickness_layers_nm[index]}
-                          onChange={(e) => handleLayerChange(index, 'thickness_layers_nm', e.target.value)}
-                          step="0.1"
-                        />
-                      </div>
-                      <div className="input-field">
-                        <label>열전도도 (W/m·K)</label>
-                        <input
-                          type="number"
-                          value={formData.k_therm_layers[index]}
-                          onChange={(e) => handleLayerChange(index, 'k_therm_layers', e.target.value)}
-                          step="0.1"
-                        />
-                      </div>
-                      <div className="input-field">
-                        <label>밀도 (kg/m³)</label>
-                        <input
-                          type="number"
-                          value={formData.rho_layers[index]}
-                          onChange={(e) => handleLayerChange(index, 'rho_layers', e.target.value)}
-                          step="1"
-                        />
-                      </div>
-                      <div className="input-field">
-                        <label>비열 (J/kg·K)</label>
-                        <input
-                          type="number"
-                          value={formData.c_p_layers[index]}
-                          onChange={(e) => handleLayerChange(index, 'c_p_layers', e.target.value)}
-                          step="1"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
 
@@ -513,7 +669,7 @@ function App() {
               <h3>열적 파라미터</h3>
               <div className="parameters-grid">
                 <div className="input-field">
-                  <label>상부 방사율 (Cathode)</label>
+                  <label>상부 방사율 (Cathode/Heat sink)</label>
                   <input
                     type="number"
                     value={formData.epsilon_top}
@@ -588,7 +744,11 @@ function App() {
               {loading ? '시뮬레이션 실행 중...' : '시뮬레이션 실행'}
             </button>
 
-            {error && <div className="error-message">{error}</div>}
+            {error && (
+              <div className="error-message" style={{ whiteSpace: 'pre-wrap' }}>
+                {error}
+              </div>
+            )}
           </div>
 
           {/* 결과 시각화 섹션 */}
@@ -625,7 +785,10 @@ function App() {
                         x1={area.x1}
                         x2={area.x2}
                         fill={area.color}
-                        fillOpacity={0.15}
+                        fillOpacity={0.35}
+                        stroke={area.color}
+                        strokeOpacity={0.5}
+                        strokeWidth={1}
                       />
                     ))}
                     {/* 레이어 경계 수직선 */}
@@ -666,24 +829,45 @@ function App() {
                   pointerEvents: 'none'
                 }}>
                   {/* Glass 라벨 */}
-                  <div style={{
-                    position: 'absolute',
-                    left: 'calc((100% - 60px) * (-100 - (-200)) / (580 - (-200)))',
-                    top: '10px',
-                    fontSize: '12px',
-                    fontWeight: 'bold',
-                    color: '#333',
-                    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-                    padding: '2px 6px',
-                    borderRadius: '3px'
-                  }}>
-                    Glass (축약)
-                  </div>
+                  {(() => {
+                    const tempRange = getTemperatureRange()
+                    const glassProfile = getGlassWavyProfile()
+                    const glassMaxTemp = glassProfile.length > 0 ? Math.max(...glassProfile.map(p => p.temperature)) : tempRange.max
+                    const yPercent = ((tempRange.max - glassMaxTemp) / (tempRange.max - tempRange.min)) * 80 + 10
+                    return (
+                      <div style={{
+                        position: 'absolute',
+                        left: 'calc((100% - 60px) * (-100 - (-200)) / (580 - (-200)))',
+                        top: `${Math.max(5, Math.min(95, yPercent))}%`,
+                        fontSize: '12px',
+                        fontWeight: 'bold',
+                        color: '#333',
+                        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                        padding: '2px 6px',
+                        borderRadius: '3px',
+                        border: '1px solid #dc2626',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        Glass (축약)
+                      </div>
+                    )
+                  })()}
                   {/* 활성층 레이어 라벨 */}
                   {getLayerAreas().map((area, idx) => {
                     const xMin = -200
                     const xMax = 580
                     const xPercent = ((area.centerX - xMin) / (xMax - xMin)) * 100
+                    // 온도 범위에 따라 라벨 위치 자동 조정
+                    const tempRange = getTemperatureRange()
+                    const activeProfile = getActiveProfile()
+                    // 해당 영역의 온도 값 찾기
+                    const areaTemps = activeProfile
+                      .filter(p => p.position >= area.x1 && p.position <= area.x2)
+                      .map(p => p.temperature)
+                    const areaMaxTemp = areaTemps.length > 0 ? Math.max(...areaTemps) : tempRange.max
+                    // 온도를 Y 위치로 변환 (그래프 높이의 10% 여백 고려)
+                    const yPercent = ((tempRange.max - areaMaxTemp) / (tempRange.max - tempRange.min)) * 80 + 10
                     return (
                       <div
                         key={`label-${idx}`}
@@ -691,14 +875,16 @@ function App() {
                           position: 'absolute',
                           left: `${xPercent}%`,
                           transform: 'translateX(-50%)',
-                          top: '10px',
+                          top: `${Math.max(5, Math.min(95, yPercent))}%`,
                           fontSize: '12px',
                           fontWeight: 'bold',
                           color: '#333',
-                          backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                          backgroundColor: 'rgba(255, 255, 255, 0.9)',
                           padding: '2px 6px',
                           borderRadius: '3px',
-                          whiteSpace: 'nowrap'
+                          whiteSpace: 'nowrap',
+                          border: `1px solid ${area.color}`,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
                         }}
                       >
                         {area.name}
