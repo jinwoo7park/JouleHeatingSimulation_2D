@@ -2,15 +2,6 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "dist",
   "framework": null,
-  "functions": {
-    "api/**/*.py": {
-      "includeFiles": [
-        "api/**",
-        "app.py",
-        "requirements.txt"
-      ]
-    }
-  },
   "rewrites": [
     {
       "source": "/api/(.*)",

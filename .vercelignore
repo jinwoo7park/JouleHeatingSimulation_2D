@@ -8,7 +8,7 @@ main.py
 docker-compose.yml
 Dockerfile
 .devcontainer
-# Frontend source files (only dist is needed)
+# Frontend source files (only dist is needed for frontend)
 src
 public
 index.html
@@ -26,7 +26,9 @@ __pycache__
 # IDE
 .vscode
 .idea
-# Build artifacts
+# Build artifacts (frontend)
 dist
 .vite
+# Exclude large files but keep essential for API
+# Note: Keep app.py and requirements.txt for API functions
 
