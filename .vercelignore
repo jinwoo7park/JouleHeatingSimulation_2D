@@ -5,8 +5,28 @@ node_modules
 *.log
 .DS_Store
 main.py
-app.py
 docker-compose.yml
 Dockerfile
 .devcontainer
+# Frontend source files (only dist is needed)
+src
+public
+index.html
+vite.config.js
+package.json
+pnpm-lock.yaml
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+# Documentation
+*.md
+# IDE
+.vscode
+.idea
+# Build artifacts
+dist
+.vite
 
