@@ -22,6 +22,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true,
+        timeout: 60000, // 60초 타임아웃
+        ws: true, // WebSocket 지원
       }
     }
   }
