@@ -30,7 +30,7 @@ const DEFAULT_VALUES = {
   thickness_layers_nm: [1100000, 70, 80, 280, 50, 100, 3000, 1000000], // Resin=3μm, Heat sink=1mm
   layer_enabled: [true, true, true, true, true, true, false, false], // Resin과 Heat sink는 기본적으로 비활성화
   voltage: 2.9,
-  current_density: 300.0,
+  current_density: 30.0, // 단위: mA/cm² (기존 300.0 A/m² = 30.0 mA/cm²)
   eqe: 0.2, // External Quantum Efficiency (20%)
   epsilon_top: 0.05,
   epsilon_bottom: 0.85,
@@ -163,10 +163,15 @@ function App() {
         r_max_multiplier: formData.r_max_multiplier
       }
       
-      console.log('API 요청 전송 중...', { url: '/api/simulate', dataSize: JSON.stringify(dataToSend).length })
+      // API URL 설정: 환경 변수가 있으면 사용, 없으면 개발 환경에서는 /api, 프로덕션에서는 Fly.io URL
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+                           (import.meta.env.DEV ? '' : 'https://jouleheatingsimulation-2d.fly.dev')
+      const apiUrl = `${API_BASE_URL}/api/simulate`
+      
+      console.log('API 요청 전송 중...', { url: apiUrl, dataSize: JSON.stringify(dataToSend).length })
       
       // 시뮬레이션 요청 전송 (session_id만 받음)
-      const response = await fetch('/api/simulate', {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -242,9 +247,11 @@ function App() {
       
       // 진행률 폴링 시작
       if (progressInterval) clearInterval(progressInterval)
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+                           (import.meta.env.DEV ? '' : 'https://jouleheatingsimulation-2d.fly.dev')
       progressInterval = setInterval(async () => {
         try {
-          const progressResponse = await fetch(`/api/progress/${sessionId}`)
+          const progressResponse = await fetch(`${API_BASE_URL}/api/progress/${sessionId}`)
           if (!progressResponse.ok) {
             console.warn('진행률 조회 실패:', progressResponse.status)
             return
@@ -828,7 +835,7 @@ function App() {
       // 전기적 파라미터
       sheet5Data.push(['전기적 파라미터', ''])
       sheet5Data.push(['전압 (V)', Number(formData.voltage)])
-      sheet5Data.push(['전류 밀도 (A/m²)', Number(formData.current_density)])
+      sheet5Data.push(['전류 밀도 (mA/cm²)', Number(formData.current_density)])
       sheet5Data.push(['EQE (External Quantum Efficiency)', Number(formData.eqe)])
       sheet5Data.push(['소자 크기 (mm²)', Number(formData.device_area_mm2)])
       sheet5Data.push(['r_max 배수 (소자 반지름의 배수)', Number(formData.r_max_multiplier)])
@@ -1010,7 +1017,7 @@ function App() {
                   />
                 </div>
                 <div className="input-field">
-                  <label>전류 밀도 (A/m²)</label>
+                  <label>전류 밀도 (mA/cm²)</label>
                   <input
                     type="number"
                     value={formData.current_density}
