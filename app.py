@@ -1425,8 +1425,14 @@ def _simulate_worker(session_id, data):
 if __name__ == '__main__':
     import sys
     # fly.io나 다른 클라우드 플랫폼에서 PORT 환경 변수 사용
-    # 환경 변수가 없으면 명령줄 인자, 그래도 없으면 기본값 5000 사용
-    port = int(os.environ.get('PORT', sys.argv[1] if len(sys.argv) > 1 else '5000'))
+    # Fly.io는 PORT 환경 변수를 자동으로 설정함
+    port_str = os.environ.get('PORT')
+    if port_str:
+        port = int(port_str)
+    elif len(sys.argv) > 1:
+        port = int(sys.argv[1])
+    else:
+        port = 8080  # Fly.io 기본값과 일치
     
     # 운영 안정성: debug=False, use_reloader=False
     # debug=True는 reloader가 프로세스를 2개 띄울 수 있어 스레딩과 충돌 가능
@@ -1435,14 +1441,27 @@ if __name__ == '__main__':
     USE_RELOADER = os.environ.get('FLASK_USE_RELOADER', 'False').lower() == 'true'
     
     # fly.io나 클라우드 환경에서는 모든 인터페이스에서 리슨해야 함
+    # 0.0.0.0으로 설정해야 외부에서 접근 가능
     host = os.environ.get('HOST', '0.0.0.0')
     
+    # 시작 메시지 출력 (로그 확인용)
+    print(f"🚀 Flask 앱 시작 중...")
+    print(f"📡 Host: {host}, Port: {port}")
+    print(f"🌐 환경 변수 PORT: {os.environ.get('PORT', '설정되지 않음')}")
+    sys.stdout.flush()
+    
     try:
+        print(f"✅ 서버 시작: http://{host}:{port}")
+        sys.stdout.flush()
         app.run(debug=DEBUG_MODE, use_reloader=USE_RELOADER, port=port, host=host)
     except OSError as e:
-        if 'Address already in use' in str(e) or 'Port already in use' in str(e):
+        error_msg = str(e)
+        print(f"❌ 포트 오류: {error_msg}")
+        sys.stdout.flush()
+        if 'Address already in use' in error_msg or 'Port already in use' in error_msg:
             print(f"⚠️ 포트 {port}가 이미 사용 중입니다.")
             print(f"다른 포트(5001)로 시도합니다...")
+            sys.stdout.flush()
             app.run(debug=DEBUG_MODE, use_reloader=USE_RELOADER, port=5001, host=host)
         else:
             raise
