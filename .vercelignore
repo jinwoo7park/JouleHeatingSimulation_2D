@@ -4,21 +4,32 @@ node_modules
 .env.local
 *.log
 .DS_Store
+
+# Backend files (deployed to Fly.io, not needed in Vercel)
+api/
+app.py
 main.py
-docker-compose.yml
+requirements.txt
 Dockerfile
+fly.toml
+.dockerignore
+docker-compose.yml
 .devcontainer
+
 # Python cache
 __pycache__
 *.pyc
 *.pyo
 *.pyd
 .Python
+
 # Documentation
 *.md
+
 # IDE
 .vscode
 .idea
+
 # Build artifacts (frontend) - will be created during build
 # Note: Keep src, index.html, vite.config.js, package.json, pnpm-lock.yaml for build
 dist
