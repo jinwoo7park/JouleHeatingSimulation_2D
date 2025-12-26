@@ -1,0 +1,69 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.log
+
+# Fly.io
+.fly/
+fly.toml.bak
+
+# Vercel
+.vercel/
+vercel.json
+
+# Dev container
+.devcontainer/
+docker-compose.yml
+
+# Documentation
+*.md
+!README.md
+SCIENTIFIC_VALIDATION.md
+
+# Test files
+*.test.py
+tests/
+
+# Results directory (런타임에 생성됨)
+/tmp/heat_eq_results
+

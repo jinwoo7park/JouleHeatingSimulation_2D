@@ -531,18 +531,22 @@ def _simulate_worker(session_id, data):
         
         # 입력 파라미터 검증
         voltage = data.get('voltage')
-        current_density = data.get('current_density')
+        current_density_mA_per_cm2 = data.get('current_density')  # 입력 단위: mA/cm²
         eqe = data.get('eqe', 0.2)
         
         # 입력 범위 검증
         if voltage is None or voltage < 0:
             raise ValueError("voltage가 없거나 음수입니다.")
-        if current_density is None or current_density < 0:
+        if current_density_mA_per_cm2 is None or current_density_mA_per_cm2 < 0:
             raise ValueError("current_density가 없거나 음수입니다.")
         if not (0 <= eqe <= 1):
             raise ValueError(f"eqe는 0~1 사이여야 합니다. 현재 값: {eqe}")
         
-        Q_A = voltage * current_density * (1 - eqe)  # W/m²
+        # current_density 단위 변환: mA/cm² → A/m²
+        # 1 mA/cm² = 0.001 A / (0.01 m)² = 0.001 A / 0.0001 m² = 10 A/m²
+        current_density_A_per_m2 = current_density_mA_per_cm2 * 10.0
+        
+        Q_A = voltage * current_density_A_per_m2 * (1 - eqe)  # W/m²
         
         epsilon_top = data.get('epsilon_top')
         epsilon_bottom = data.get('epsilon_bottom')
@@ -1044,8 +1048,8 @@ def _simulate_worker(session_id, data):
                 'y0': T0_flat,
                 't_eval': t_eval,
                 'method': 'BDF',
-                'atol': 1e-4,  # 1e-5 → 1e-4로 더 완화 (속도 향상)
-                'rtol': 1e-2   # 1e-3 → 1e-2로 더 완화 (속도 향상)
+                'atol': 1e-6,  # 절대 오차 허용 범위 (더 엄격하게 설정)
+                'rtol': 1e-4   # 상대 오차 허용 범위 (더 엄격하게 설정)
             }
             
             # Jacobian 사용 여부에 따라 조건부 추가
@@ -1420,10 +1424,9 @@ def _simulate_worker(session_id, data):
 
 if __name__ == '__main__':
     import sys
-    # 포트가 이미 사용 중이면 다른 포트 사용
-    port = 5000
-    if len(sys.argv) > 1:
-        port = int(sys.argv[1])
+    # fly.io나 다른 클라우드 플랫폼에서 PORT 환경 변수 사용
+    # 환경 변수가 없으면 명령줄 인자, 그래도 없으면 기본값 5000 사용
+    port = int(os.environ.get('PORT', sys.argv[1] if len(sys.argv) > 1 else '5000'))
     
     # 운영 안정성: debug=False, use_reloader=False
     # debug=True는 reloader가 프로세스를 2개 띄울 수 있어 스레딩과 충돌 가능
@@ -1431,12 +1434,15 @@ if __name__ == '__main__':
     DEBUG_MODE = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
     USE_RELOADER = os.environ.get('FLASK_USE_RELOADER', 'False').lower() == 'true'
     
+    # fly.io나 클라우드 환경에서는 모든 인터페이스에서 리슨해야 함
+    host = os.environ.get('HOST', '0.0.0.0')
+    
     try:
-        app.run(debug=DEBUG_MODE, use_reloader=USE_RELOADER, port=port, host='127.0.0.1')
+        app.run(debug=DEBUG_MODE, use_reloader=USE_RELOADER, port=port, host=host)
     except OSError as e:
         if 'Address already in use' in str(e) or 'Port already in use' in str(e):
             print(f"⚠️ 포트 {port}가 이미 사용 중입니다.")
             print(f"다른 포트(5001)로 시도합니다...")
-            app.run(debug=DEBUG_MODE, use_reloader=USE_RELOADER, port=5001, host='127.0.0.1')
+            app.run(debug=DEBUG_MODE, use_reloader=USE_RELOADER, port=5001, host=host)
         else:
             raise
