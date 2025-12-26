@@ -247,8 +247,7 @@ function App() {
       
       // 진행률 폴링 시작
       if (progressInterval) clearInterval(progressInterval)
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-                           (import.meta.env.DEV ? '' : 'https://jouleheatingsimulation-2d.fly.dev')
+      // API_BASE_URL은 이미 위에서 선언됨
       progressInterval = setInterval(async () => {
         try {
           const progressResponse = await fetch(`${API_BASE_URL}/api/progress/${sessionId}`)
