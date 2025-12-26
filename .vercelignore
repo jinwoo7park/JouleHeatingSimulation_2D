@@ -8,12 +8,6 @@ main.py
 docker-compose.yml
 Dockerfile
 .devcontainer
-# Frontend source files (only dist is needed after build)
-# Note: Keep package.json and pnpm-lock.yaml for build
-src
-public
-index.html
-vite.config.js
 # Python cache
 __pycache__
 *.pyc
@@ -26,6 +20,7 @@ __pycache__
 .vscode
 .idea
 # Build artifacts (frontend) - will be created during build
+# Note: Keep src, index.html, vite.config.js, package.json, pnpm-lock.yaml for build
 dist
 .vite
 
